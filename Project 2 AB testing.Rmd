@@ -1,0 +1,47 @@
+---
+title: "Project 2 AB testing"
+author: "FR"
+date: "2023-10-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Data source: https://www.data-action-lab.com/wp-content/uploads/2020/09/ab_data.csv 
+```{r data prep}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+ab <-read.csv("/Users/frauleinretanal/Downloads/MAT 5314/Project 2/ab_data.csv")
+```
+
+```{r mismatch}
+#use to identify mismatches
+tables <- table(ab$group, ab$landing_page)
+ftable(tables)
+
+duplicate_rows <- ab[duplicated(ab$user_id), ]
+
+#removes mismatches
+ab<- ab[(ab$landing_page == "new_page" & ab$group == "treatment") |
+              (ab$landing_page == "old_page" & ab$group == "control"), ]
+```
+
+```{r mismatch removed}
+#check duplicates now without mismatches 
+tables <- table(ab$group, ab$landing_page)
+ftable(tables)
+
+duplicate_rows <- ab[duplicated(ab$user_id), ]
+ab <- ab[!duplicated(ab$user_id), ]
+```
+
+```{r fixing date}
+ab$date <- format(as.Date(ab$timestamp), format = "%d-%m-%Y")
+ab$time <- format(as.POSIXct(ab$timestamp), format = "%H:%M:%S")
+
+```
+
+
