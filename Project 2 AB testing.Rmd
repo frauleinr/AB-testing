@@ -2,19 +2,25 @@
 title: "Project 2 AB testing"
 author: "FR"
 date: "2023-10-15"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-Data source: https://www.data-action-lab.com/wp-content/uploads/2020/09/ab_data.csv 
+Data source: <https://www.data-action-lab.com/wp-content/uploads/2020/09/ab_data.csv>
+#Question 1
 ```{r data prep}
 library(dplyr)
 library(tidyverse)
 library(ggplot2)
+library(patchwork)
+library(Hmisc)
+
 ab <-read.csv("/Users/frauleinretanal/Downloads/MAT 5314/Project 2/ab_data.csv")
+```
+
+```{r fixing date}
+ab$date <- format(as.Date(ab$timestamp), format = "%d-%m-%Y")
+ab$time <- format(as.POSIXct(ab$timestamp), format = "%H:%M:%S")
 ```
 
 ```{r mismatch}
@@ -38,10 +44,411 @@ duplicate_rows <- ab[duplicated(ab$user_id), ]
 ab <- ab[!duplicated(ab$user_id), ]
 ```
 
-```{r fixing date}
-ab$date <- format(as.Date(ab$timestamp), format = "%d-%m-%Y")
-ab$time <- format(as.POSIXct(ab$timestamp), format = "%H:%M:%S")
+```{r conversion rate}
+table_conversion <- print(table(ab$converted, ab$group))
+print(ftable(addmargins(table_conversion)))
 
+beta_values <- c(127785, 128046)
+alpha_values <- c(17489, 17264)
+column_names <- c("p", "alpha", "beta")
+sample_size <- c(145274, 145310)
+
+q1_df <- data.frame(`page` = c("old", "new"), `alpha` = alpha_values, `beta` = beta_values, `sample_size` = sample_size)
+print(q1_df)
 ```
+
+#Question 2
+```{r credibility interval}
+CredIntervals <- data.frame()
+prior_a <- 2
+prior_b <- 20
+a_values <- c(0, 17489, 17264)
+b_values <- c(0, 127785, 128046)
+fun_peak <- function(a, b) { print((prior_a + a - 1) / (prior_a + a + prior_b + b - 2)) }
+
+for (i in 1:length(a_values)) {
+  a_current <- a_values[i]
+  b_current <- b_values[i]
+  
+  # Compute the quantiles
+  q_lower <- qbeta(.025, prior_a + a_current, prior_b + b_current)
+  q_upper <- qbeta(0.975, prior_a + a_current, prior_b + b_current)
+  peak <- fun_peak(a_current,b_current)
+  # Create a data frame with the results and bind it to CredIntervals
+  result_df <- data.frame(
+    alpha = a_current,
+    beta = b_current,
+    peak = peak,
+    Lower = q_lower,
+    Upper = q_upper
+    )
+  CredIntervals <- rbind(CredIntervals, result_df)
+}
+print(CredIntervals)
+```
+## Final Graphs
+
+```{r posterior with shade}
+# Prior parameters
+prior_a <- 2
+prior_b <- 20
+
+fun_beta_old <- function(x) dbeta(x, prior_a + 17489, prior_b + 127785)
+fun_beta_new <- function(x) dbeta(x, prior_a + 17264, prior_b + 128046)
+
+# Create a data frame with x values
+x_values <- data.frame(x = seq(0, 1, length.out = 1e4))
+
+# Calculate density values for old and new
+x_values <- x_values %>%
+  mutate(
+    old = map_dbl(x, fun_beta_old),
+    new = map_dbl(x, fun_beta_new)
+  )
+
+#unmodified graph
+ggplot() +
+  geom_ribbon(data = filter(x_values, x >= 0.11871360, x <= 0.1220600), aes(x = x, fill = "Old Page CI", ymin = 0, ymax = old), alpha = 0.5) +
+  geom_ribbon(data = filter(x_values, x >= 0.11714534, x <= 0.1204723), aes(x = x, fill = "New Page CI", ymin = 0, ymax = new), alpha = 0.5) +
+  geom_line(data = x_values, aes(x = x, y = old, color = "Old"), size = 0.5) +
+  geom_line(data = x_values, aes(x = x, y = new, color = "New"), size = 0.5) +
+  labs(x = "Conversion Rate", y = "Density",
+       title = "Posterior Probability of Sign-up Rate") +
+  scale_x_continuous(limits = c(0.115, 0.125)) +
+  scale_fill_manual(values = c("Old Page CI" = "lightblue", "New Page CI" = "pink")) +
+  scale_color_manual(values = c("Old" = "blue", "New" = "red")) +
+  guides(
+    fill = guide_legend(title = "Central Interval", override.aes = list(alpha = c(0.5))),
+    color = guide_legend(title = "Page", override.aes = list(size = 0.5))
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = 'transparent'),
+    axis.line.x = element_line(color = "black"),
+    axis.line.y = element_line(color = "black")
+  )
+```
+
+```{r prior with shade}
+alpha <- 2
+beta <- 20
+
+fun_beta <- function(x) dbeta(x, alpha, beta)
+peak <- (alpha - 1) / (alpha + beta - 2)
+peak_df <- data.frame(x = peak, y = dbeta(peak, alpha, beta))
+x_lower_limit <- 0.01174932
+x_upper_limit <- 0.2381599
+
+x_values <- data.frame(x = seq(0, 1, length.out = 1e4))
+x_density <- x_values %>%
+  mutate(density = fun_beta(x))
+
+shading_data <- data.frame(
+  x = c(x_lower_limit, subset(x_values, x >= x_lower_limit & x <= x_upper_limit)$x, x_upper_limit),
+  density = c(0, subset(x_density, x >= x_lower_limit & x <= x_upper_limit)$density, 0)
+)
+
+#unmodified graph
+ ggplot() +
+  geom_area(data = shading_data, aes(x = x, y = density), fill = "grey", alpha = 0.5) +
+  geom_function(fun = fun_beta) +
+  geom_vline(xintercept = peak, linetype = "dashed", color = "red") +
+  geom_text(data = peak_df, aes(x, y, label = round(x, 2), vjust = 0, hjust = -.3), color = "red") +
+  labs(x = "Conversion Rate", y = "Density", title ='Prior Distribution (alpha = 2, beta = 20)') +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill='transparent'),
+    axis.line.x = element_line(color="black" ),
+    axis.line.y = element_line(color="black")
+  ) +
+  xlim(0, 1) +
+  ylim(0, 8)
+```
+
+```{r combined graph}
+prior_a <- 2
+prior_b <- 20
+
+fun_beta_old <- function(x) dbeta(x, prior_a + 17489, prior_b + 127785)
+fun_beta_new <- function(x) dbeta(x, prior_a + 17264, prior_b + 128046)
+
+# Create a data frame with x values
+x_values <- data.frame(x = seq(0, 1, length.out = 1e4))
+
+# Calculate density values for old and new
+x_values <- x_values %>%
+  mutate(
+    old = map_dbl(x, fun_beta_old),
+    new = map_dbl(x, fun_beta_new)
+  )
+
+# modified graph for combination
+Q2_graph2 <- ggplot() +
+  geom_ribbon(data = filter(x_values, x >= 0.11871360, x <= 0.1220600), aes(x = x, fill = "Old Page CI", ymin = 0, ymax = old), alpha = 0.5) +
+  geom_ribbon(data = filter(x_values, x >= 0.11714534, x <= 0.1204723), aes(x = x, fill = "New Page CI", ymin = 0, ymax = new), alpha = 0.5) +
+  geom_line(data = x_values, aes(x = x, y = old, color = "Old"), size = 0.5) +
+  geom_line(data = x_values, aes(x = x, y = new, color = "New"), size = 0.5) +
+  labs(x = "Conversion Rate", y = "Density",
+       title = "Posterior Distribution of Sign-up Rate") +
+  scale_x_continuous(limits = c(0, 0.3)) +
+  scale_fill_manual(values = c("Old Page CI" = "lightblue", "New Page CI" = "pink")) +
+  scale_color_manual(values = c("Old" = "blue", "New" = "red")) +
+  guides(
+    fill = guide_legend(title = "Central Interval", override.aes = list(alpha = c(0.5))),
+    color = guide_legend(title = "Page", override.aes = list(size = 0.5))
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = 'transparent'),
+    axis.line.x = element_line(color = "black"),
+    axis.line.y = element_line(color = "black")
+  )
+
+alpha <- 2
+beta <- 20
+
+fun_beta <- function(x) dbeta(x, alpha, beta)
+peak <- (alpha - 1) / (alpha + beta - 2)
+peak_df <- data.frame(x = peak, y = dbeta(peak, alpha, beta))
+x_lower_limit <- 0.0117493
+x_upper_limit <- 0.2381599
+
+x_values <- data.frame(x = seq(0, 1, length.out = 1e4))
+x_density <- x_values %>%
+  mutate(density = fun_beta(x))
+
+shading_data <- data.frame(
+  x = c(x_lower_limit, subset(x_values, x >= x_lower_limit & x <= x_upper_limit)$x, x_upper_limit),
+  density = c(0, subset(x_density, x >= x_lower_limit & x <= x_upper_limit)$density, 0)
+)
+
+#modified graph for combination
+Q2_graph1 <- ggplot() +
+  geom_area(data = shading_data, aes(x = x, y = density), fill = "grey", alpha = 0.5) +
+  geom_function(fun = fun_beta) +
+  labs(x = "Sign-up Rate", y = "Density", title ='Prior Distribution of Sign-up Rate (alpha = 2, beta = 20)') +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill='transparent'),
+    axis.line.x = element_line(color="black" ),
+    axis.line.y = element_line(color="black")
+  ) +
+  xlim(0, 0.3) +
+  ylim(0, 8)
+combined_graph <- Q2_graph1 / Q2_graph2
+print(combined_graph)
+```
+
+#Question 2.5
+At what sample size does the priors and posterior converge?
+```{r simulation from book}
+set.seed(420)
+n <- 1e8
+#A = old page and B = new page
+prior <- data.frame(p.A = rbeta(n, 2, 20),
+                    p.B = rbeta (n, 2, 20)
+                    )
+
+generator <- function(p.A, p.B) {
+  conv.A <- rbinom(1, 145274, p.A)
+  conv.B <- rbinom(1, 145310, p.B)
+  c(conv.A = conv.A, conv.B = conv.B)
+}
+
+sim.data <- as.data.frame( t(sapply(1:n, function(i) {
+  generator(prior$p.A[i], prior$p.B[i])})))
+
+#mean(posterior$p.A) = 0.1203886
+#mean(posterior$p.B) = 0.1188082
+
+g <- 243
+h <- 241
+
+sim.data.filtered <- sim.data[
+  sim.data$conv.A >= (17489 - g) &
+  sim.data$conv.A <= (17489 + g) &
+  sim.data$conv.B >= (17264 - h) &
+  sim.data$conv.B <= (17264 + h), ]
+
+posterior <- subset(prior, 
+            sim.data$conv.A >= (17489 - g) &
+            sim.data$conv.A <= (17489 + g) &
+            sim.data$conv.B >= (17264 - h) &
+            sim.data$conv.B <= (17264 + h)
+            )
+```
+
+```{r simulation plot histograms}
+#Step 2 Graph
+options(scipen = 999)
+par(mfrow = c(1, 2))  # Set up a 1x2 grid for side-by-side plots
+hist(sim.data$conv.A, main = "old page", xlab = "Sign-ups", xaxt = "n", col = "#2AA2EE")
+axis(1, at = seq(0, 100000, by = 40000), labels = paste0(seq(0, 100, by = 40), "K"))
+
+hist(sim.data$conv.B, main = "new page", xlab = "Sign-ups", xaxt = "n", col = "#76BC46")
+axis(1, at = seq(0, 100000, by = 40000), labels = paste0(seq(0, 100, by = 40), "K"))
+par(mfrow = c(1, 1))
+
+#Step 3 Graph
+par(mfrow = c(1, 2))
+hist(posterior$p.A, main = "old page", xlab="Sign-up Rate", col = "#2AA2EE")
+hist(posterior$p.B, main = "new page", xlab="Sign-up Rate", col = "#76BC46")
+par(mfrow = c(1, 1))
+
+print(mean(posterior$p.B-posterior$p.A))
+
+#Step 4 Graph
+posterior$diff <- posterior$p.B - posterior$p.A
+
+n_breaks <- 30
+custom_breaks <- seq(min(posterior$diff), max(posterior$diff), length.out = n_breaks + 1)
+colors <- ifelse(custom_breaks <= -0.00005, "#2AA2EE", "#76BC46")
+
+hist(posterior$diff,
+     main = "Histogram of Old webpage - New webpage",
+     xlab = "Sign-up rate difference",
+     breaks = custom_breaks,
+     col = colors,
+)
+```
+
+```{r simulation plot of difference}
+# Calculate the posterior difference between p.A and p.B
+posterior_diff <- posterior$p.A - posterior$p.B
+confidence_interval <- quantile(posterior_diff, c(0.025, 0.975))
+
+colors <- ifelse(posterior_diff > 0, "green", "grey")
+
+# Create the histogram with colored bars and without bin labels
+hist(posterior_diff, 
+     col = colors,
+     main = "Histogram of Posterior Differences",
+     xlab = "Posterior Difference",
+     labels = FALSE,  # Turn off bin labels
+     xlim = c(min(posterior_diff), max(posterior_diff)))
+```
+
+#Question 3
+```{r generate n samples}
+# Initialize an empty dataframe
+q3 <- data.frame(new_n = numeric(0), new_a = numeric(0), new_b = numeric(0), old_a = numeric(0), old_b = numeric(0))
+
+set.seed(69)
+ab_new <-ab[ab$group == "treatment", ]
+ab_old <-ab[ab$group == "control", ]
+  
+for (n in seq(100, 500, by = 100)) {
+  sampleq3_new <- ab_new[sample(1:nrow(ab_new), n, replace = FALSE), ]
+  sampleq3_old <- ab_old[sample(1:nrow(ab_old), n, replace = FALSE), ]
+
+  new_a <- sum(sampleq3_new$converted == 1)
+  new_b <- n - new_a
+  old_a <- sum(sampleq3_old$converted == 1)
+  old_b <- n - old_a
+
+  q3_row <- data.frame(new_n = n, new_a, new_b, old_a, old_b)
+  q3 <- rbind(q3, q3_row)
+}
+
+for (n in seq(1000, 2000, by = 1000)) {
+  sampleq3_new <- ab_new[sample(1:nrow(ab_new), n, replace = FALSE), ]
+  sampleq3_old <- ab_old[sample(1:nrow(ab_old), n, replace = FALSE), ]
+
+  new_a <- sum(sampleq3_new$converted == 1)
+  new_b <- n - new_a
+  old_a <- sum(sampleq3_old$converted == 1)
+  old_b <- n - old_a
+
+  q3_row <- data.frame(new_n = n, new_a, new_b, old_a, old_b)
+  q3 <- rbind(q3, q3_row)
+}
+
+for (n in seq(5000, 10000, by = 5000)) {
+  sampleq3_new <- ab_new[sample(1:nrow(ab_new), n, replace = FALSE), ]
+  sampleq3_old <- ab_old[sample(1:nrow(ab_old), n, replace = FALSE), ]
+
+  new_a <- sum(sampleq3_new$converted == 1)
+  new_b <- n - new_a
+  old_a <- sum(sampleq3_old$converted == 1)
+  old_b <- n - old_a
+
+  q3_row <- data.frame(new_n = n, new_a, new_b, old_a, old_b)
+  q3 <- rbind(q3, q3_row)
+}
+
+n_values <- c(20000, 50000, 100000)
+for (n in n_values) {
+  sampleq3_new <- ab_new[sample(1:nrow(ab_new), n, replace = FALSE), ]
+  sampleq3_old <- ab_old[sample(1:nrow(ab_old), n, replace = FALSE), ]
+
+  new_a <- sum(sampleq3_new$converted == 1)
+  new_b <- n - new_a
+  old_a <- sum(sampleq3_old$converted == 1)
+  old_b <- n - old_a
+
+  q3_row <- data.frame(new_n = n, new_a, new_b, old_a, old_b)
+  q3 <- rbind(q3, q3_row)
+}
+```
+
+```{r generate graphs}
+options(scipen = 999)
+
+par(mfrow = c(3, 3))
+par(mar = c(2, 3, 2, 1) + 0.1)
+for (i in 1:nrow(q3)) {
+  p = seq(0, 0.4, length=100)
+  plot(p, dbeta(p, (q3$new_a[i] + 2), (q3$new_b[i]) + 20), type='l',
+       col = "purple",
+       xlab = "Conversion Rate (p)",
+       ylab = ""
+       )
+  lines(p, dbeta(p, (q3$old_a[i] + 2), (q3$old_b[i]) + 20), col='darkgreen')
+  lines(p, dbeta(p, 2, 20), col='grey')
+  title(main = paste("Sample size =", q3$new_n[i]))
+  
+if (i == 3) {
+    legend("topright", c('New', 'Old', 'Prior'),
+           lty = c(1, 1), col = c('purple',"darkgreen", 'grey'))
+  }
+}
+```
+
+```{r}
+set.seed(69)
+options(scipen = 999)
+
+ab_new <-ab[ab$group == "treatment", ]
+ab_old <-ab[ab$group == "control", ]
+
+q3 <- data.frame(new_n = numeric(0), new_a = numeric(0), new_b = numeric(0), old_a = numeric(0), old_b = numeric(0), new_lower = numeric(0), new_upper = numeric(0), old_lower = numeric(0), old_upper = numeric(0), new_CIrange = numeric(0), old_CIrange = numeric(0))
+
+n_values <- c(100, 200, 300, 400, 500, 1000, 5000, 10000, 20000, 50000, 100000)
+for (n in n_values) {
+  sampleq3_new <- ab_new[sample(1:nrow(ab_new), n, replace = FALSE), ]
+  sampleq3_old <- ab_old[sample(1:nrow(ab_old), n, replace = FALSE), ]
+
+  new_a <- sum(sampleq3_new$converted == 1)
+  new_b <- n - new_a
+  old_a <- sum(sampleq3_old$converted == 1)
+  old_b <- n - old_a
+
+  new_lower <- qbeta(0.025, 2 + new_a, 20 + new_b)
+  new_upper <- qbeta(0.975, 2 + new_a, 20 + new_b)
+  old_lower <- qbeta(0.025, 2 + old_a, 20 + old_b)
+  old_upper <- qbeta(0.975, 2 + old_a, 20 + old_b)
+  
+  new_CIrange <- new_upper - new_lower
+  old_CIrange <- old_upper - old_lower
+
+  q3_row <- data.frame(new_n = n, new_a, new_b, old_a, old_b, new_lower, new_upper, old_lower, old_upper, new_CIrange, old_CIrange)
+  q3 <- rbind(q3, q3_row)
+  
+}
+```
+
+
+
+
 
 
